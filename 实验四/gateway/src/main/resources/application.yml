@@ -1,0 +1,81 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: api-gateway
+  cloud:
+    gateway:
+      discovery:
+        locator:
+          enabled: false   # 禁用自动发现，使用手动配置的动态路由
+          lower-case-service-id: true
+
+      routes:
+        # ========== 路由1: 产品服务 (product-service) ==========
+        - id: product-service-route
+          uri: lb://product-service
+          predicates:
+            - Path=/api/products/**
+          filters:
+            - StripPrefix=0
+            - name: CircuitBreaker
+              args:
+                name: productCircuitBreaker
+                fallbackUri: forward:/fallback/product
+
+        # ========== 路由2: 库存服务 (product-service, 同服务名不同实例) ==========
+        - id: inventory-service-route
+          uri: lb://product-service
+          predicates:
+            - Path=/api/inventory/**
+          filters:
+            - StripPrefix=0
+            - name: CircuitBreaker
+              args:
+                name: inventoryCircuitBreaker
+                fallbackUri: forward:/fallback/inventory
+
+        # ========== 路由3: 端口展示路由（用于验证负载均衡）==========
+        - id: port-check-route
+          uri: lb://product-service
+          predicates:
+            - Path=/api/port
+          filters:
+            - name: RequestRateLimiter
+              args:
+                redis-rate-limiter.replenishRate: 5
+                redis-rate-limiter.burstCapacity: 10
+                redis-rate-limiter.requestedTokens: 1
+
+      # ========== 全局过滤器默认配置 ==========
+      default-filters:
+        - DedupeResponseHeader=Access-Control-Allow-Origin
+
+  # Resilience4J 断路器配置
+  cloud.circuitbreaker.resilience4j:
+    productCircuitBreaker:
+      slidingWindowSize: 10
+      failureRateThreshold: 50
+      waitDurationInOpenState: 10000ms
+      permittedNumberOfCallsInHalfOpenState: 3
+    inventoryCircuitBreaker:
+      slidingWindowSize: 10
+      failureRateThreshold: 50
+      waitDurationInOpenState: 10000ms
+      permittedNumberOfCallsInHalfOpenState: 3
+
+# Eureka 注册中心
+eureka:
+  client:
+    service-url:
+      defaultZone: http://localhost:8761/eureka
+  instance:
+    prefer-ip-address: true
+    instance-id: ${spring.cloud.client.ip-address}:${server.port}
+
+# 日志
+logging:
+  level:
+    org.springframework.cloud.gateway: INFO
+    com.experiment.gateway: DEBUG
